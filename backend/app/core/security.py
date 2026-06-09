@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,16 +10,21 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
 
+def _to_bytes(password: str) -> bytes:
+    """Encode và truncate đúng 72 bytes (giới hạn bcrypt)."""
+    return password.encode("utf-8")[:72]
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    hashed = bcrypt.hashpw(_to_bytes(password), bcrypt.gensalt())
+    return hashed.decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(_to_bytes(plain), hashed.encode("utf-8"))
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
