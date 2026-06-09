@@ -1,8 +1,8 @@
 import axios from 'axios'
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-export const api = axios.create({ baseURL: `${BASE}/api/v1` })
+// Dùng đường dẫn tương đối — hoạt động ở mọi IP, mọi môi trường
+// Nginx proxy: /api/ → backend:8000
+const api = axios.create({ baseURL: '/api/v1' })
 
 api.interceptors.request.use((cfg) => {
   const token = localStorage.getItem('token')
@@ -21,17 +21,14 @@ api.interceptors.response.use(
   }
 )
 
-// Auth
 export const login = (username: string, password: string) =>
   api.post('/auth/login', { username, password }).then((r) => r.data)
 
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
 
-// Agents
 export const getAgents = () => api.get('/agents/').then((r) => r.data)
 export const pingAgent = (id: string) => api.get(`/agents/${id}/ping`).then((r) => r.data)
 
-// Chat
 export const getSessions = () => api.get('/chat/sessions').then((r) => r.data)
 export const getMessages = (sessionId: string) =>
   api.get(`/chat/sessions/${sessionId}/messages`).then((r) => r.data)

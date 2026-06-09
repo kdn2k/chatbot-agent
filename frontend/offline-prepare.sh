@@ -1,26 +1,25 @@
 #!/bin/bash
-# Chạy script này trên máy CÓ MẠNG để chuẩn bị gói offline
-# Sau đó copy toàn bộ thư mục frontend/ sang máy offline
 set -e
 
-echo "=== Chuẩn bị môi trường offline cho Frontend ==="
+echo "=== Chuẩn bị offline Frontend ==="
 
-# 1. Download fonts
-echo ""
-echo "[1/3] Tải fonts..."
+echo "[1/4] Tải fonts..."
 bash download-assets.sh
 
-# 2. Install npm packages
-echo ""
-echo "[2/3] Cài npm packages..."
+echo "[2/4] npm install..."
 npm install
 
-# 3. Build production bundle (tất cả JS/CSS đã bundle vào dist/)
-echo ""
-echo "[3/3] Build production bundle..."
-npm run build
+echo "[3/4] Build production..."
+node node_modules/vite/bin/vite.js build
+
+echo "[4/4] Kiểm tra localhost trong dist..."
+COUNT=$(grep -ro "localhost" dist/assets/*.js 2>/dev/null | wc -l)
+if [ "$COUNT" -gt 0 ]; then
+  echo "⚠ Còn $COUNT chỗ chứa 'localhost':"
+  grep -ro "localhost[^'\"]*" dist/assets/*.js | head -10
+else
+  echo "✓ Không còn localhost trong dist — OK bưng đi đâu cũng chạy!"
+fi
 
 echo ""
-echo "=== Hoàn tất! ==="
-echo "Copy thư mục dist/ và public/fonts/ sang server offline"
-echo "Chạy: npx serve -s dist -l 3000"
+echo "=== Xong! ==="
