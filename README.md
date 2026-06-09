@@ -1,124 +1,195 @@
-# WebChat Operation Platform
+# WebChat Operation Platform — Phase 1
 
-Terminal-style webchat that converts natural language into shell commands, previews them for user confirmation, and dispatches to remote .NET agent servers.
+Terminal-style webchat: nhập tiếng tự nhiên → Gemma4 parse → JSON command preview → user confirm → .NET agent thực thi.
 
-## Architecture
+## Yêu cầu
 
-```
-ReactJS (Port 3000)
-    │  REST API
-    ▼
-Python FastAPI (Port 8000)
-    ├── PostgreSQL (Port 5432)   ← agent_servers registry
-    └── Ollama/Gemma4 (Port 11434)  ← prompt → JSON command
-         │  (after user confirms)
-         ▼
-.NET Agent (Port 5001)  ← executes bash/powershell
-```
+| Thành phần | Yêu cầu |
+|---|---|
+| Node.js | >= 18 |
+| Python | >= 3.11 |
+| PostgreSQL | >= 14 (running locally) |
+| .NET SDK | >= 8.0 |
+| Ollama | Đã cài, có model gemma3:4b |
 
-## Phase 1 Quick Start
+---
 
-### Prerequisites
-- Docker & Docker Compose
-- Ollama installed locally with Gemma4 pulled:
-  ```
-  ollama pull gemma3:4b
-  ollama serve
-  ```
-
-### Run
+## 1. PostgreSQL — Tạo DB và schema
 
 ```bash
-docker compose up -d
+# Tạo user + database
+psql -U postgres -c "CREATE USER webchat_user WITH PASSWORD 'webchat_pass';"
+psql -U postgres -c "CREATE DATABASE webchat OWNER webchat_user;"
+
+# Chạy schema
+psql -U webchat_user -d webchat -f backend/init.sql
 ```
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000/docs
-- Default login: `admin` / `Admin@123`
+---
 
-### Run .NET Agent (on each target server)
+## 2. Ollama — Kéo model Gemma4
+
+```bash
+ollama pull gemma3:4b
+ollama serve          # chạy ở port 11434
+```
+
+---
+
+## 3. Backend — Python FastAPI
+
+```bash
+cd backend
+
+# Tạo virtualenv
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# Cài thư viện
+pip install -r requirements.txt
+
+# Cấu hình (sửa nếu cần)
+cp .env .env.local   # hoặc chỉnh thẳng .env
+
+# Chạy
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+API docs: http://localhost:8000/docs  
+Default login: `admin` / `Admin@123`
+
+---
+
+## 4. Frontend — ReactJS
+
+```bash
+cd frontend
+
+npm install
+npm run dev          # dev server port 3000
+```
+
+Mở: http://localhost:3000
+
+---
+
+## 5. .NET Agent — Deploy trên từng server target
 
 ```bash
 cd agent
+
+dotnet restore
 dotnet run --project WebChatAgent
-# Agent listens on http://0.0.0.0:5001
+# Agent lắng nghe tại http://0.0.0.0:5001
 ```
 
-Or via Docker:
-```bash
-cd agent
-docker build -t webchat-agent .
-docker run -d -p 5001:5001 \
-  -e AgentSettings__ApiKey=your-key \
-  webchat-agent
+**Cấu hình agent** trong `WebChatAgent/appsettings.json`:
+- `AgentSettings:ApiKey` — key phải khớp với `api_key` trong DB
+- `AgentSettings:AllowedShells` — bash / powershell / cmd
+- `AgentSettings:BlacklistedCommands` — các lệnh bị chặn
+
+---
+
+## Luồng hoạt động
+
+```
+User nhập: "Kiểm tra disk space trên server-linux-01"
+    │
+    ▼
+Backend lấy danh sách agent servers từ PostgreSQL
+    │
+    ▼
+Gọi Gemma4 (Ollama) → trả JSON:
+{
+  "command": "df -h",
+  "shell_type": "bash",
+  "description": "Hiển thị dung lượng đĩa dạng human-readable",
+  "suggested_agent": "server-linux-01",
+  "risk_level": "low"
+}
+    │
+    ▼
+Frontend hiển thị preview + nút Confirm / Cancel
+    │  (user nhấn Confirm, chọn server)
+    ▼
+Backend POST tới .NET Agent: http://192.168.1.10:5001/api/execute
+    │
+    ▼
+Agent chạy lệnh, trả output → hiển thị trong chat
 ```
 
-### Register Agent Server
+---
 
-After login, the seeded agent servers are already in DB. Add more via API:
+## Thêm Agent Server mới vào DB
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/agents/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "my-server",
-    "host": "192.168.1.100",
+    "name": "server-app-01",
+    "description": "App server Linux",
+    "host": "192.168.1.50",
     "port": 5001,
-    "api_key": "my-agent-key",
+    "api_key": "agent-key-app-01",
     "os_type": "linux",
     "shell_type": "bash"
   }'
 ```
 
-## Flow
+---
 
-1. User types: `"Show disk usage on server-linux-01"`
-2. Backend fetches agent list from PostgreSQL
-3. Calls Gemma4 → returns JSON:
-   ```json
-   {
-     "command": "df -h",
-     "shell_type": "bash",
-     "description": "Show disk usage in human-readable format",
-     "suggested_agent": "server-linux-01",
-     "risk_level": "low"
-   }
-   ```
-4. Frontend shows command preview + confirm/cancel dialog
-5. User selects target server → clicks Confirm Execute
-6. Backend POSTs to .NET Agent → agent runs command → returns output
-7. Output displayed in chat
-
-## Phase 2 (Planned)
-
-- AD/LDAP login integration (replace local auth)
-- mTLS mutual authentication between backend ↔ agent
-- JWT signing with AD user claims
-- Role-based command permissions
-- Audit log with user attribution
-
-## Project Structure
+## Cấu trúc project
 
 ```
 webchat-operation/
-├── frontend/           ReactJS + Vite + TypeScript
-│   └── src/
-│       ├── pages/      LoginPage, ChatPage
-│       ├── components/ CommandConfirmPanel
-│       ├── services/   api.ts (axios)
-│       └── store/      authStore.ts (zustand)
-├── backend/            Python FastAPI
-│   └── app/
-│       ├── api/        auth.py, agents.py, chat.py
-│       ├── core/       config, database, security
-│       ├── models/     SQLAlchemy ORM
-│       ├── schemas/    Pydantic schemas
-│       └── services/   ai_service, agent_service
-├── agent/              .NET 8 Web API
-│   └── WebChatAgent/
-│       ├── Controllers/ AgentController
-│       ├── Services/   CommandExecutor
-│       └── Models/     ExecuteRequest/Result
-└── docker-compose.yml
+├── frontend/                   ReactJS + Vite + TypeScript
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── LoginPage.tsx
+│   │   │   └── ChatPage.tsx
+│   │   ├── components/
+│   │   │   └── CommandConfirmPanel.tsx
+│   │   ├── services/api.ts     axios, tự thêm JWT header
+│   │   └── store/authStore.ts  Zustand
+│   ├── .env
+│   └── package.json
+│
+├── backend/                    Python FastAPI
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── auth.py         POST /auth/login, GET /auth/me
+│   │   │   ├── agents.py       GET/POST /agents/, GET /agents/{id}/ping
+│   │   │   └── chat.py         POST /chat/send, /chat/execute, /chat/cancel
+│   │   ├── core/
+│   │   │   ├── config.py       Settings từ .env
+│   │   │   ├── database.py     SQLAlchemy async engine
+│   │   │   └── security.py     JWT, bcrypt
+│   │   ├── models/             SQLAlchemy ORM
+│   │   ├── schemas/            Pydantic v2
+│   │   └── services/
+│   │       ├── ai_service.py   Gọi Ollama → parse JSON
+│   │       └── agent_service.py HTTP dispatch tới .NET agent
+│   ├── init.sql                Schema + seed data
+│   ├── .env
+│   └── requirements.txt
+│
+└── agent/                      .NET 8 Web API
+    └── WebChatAgent/
+        ├── Controllers/
+        │   └── AgentController.cs   GET /api/health, POST /api/execute
+        ├── Services/
+        │   └── CommandExecutor.cs   Chạy bash/powershell, timeout, blacklist
+        ├── Models/Models.cs
+        ├── Program.cs
+        └── appsettings.json
 ```
+
+---
+
+## Phase 2 (kế tiếp)
+
+- Đăng nhập AD/LDAP thay local auth
+- mTLS giữa backend ↔ agent (mutual TLS certificate)
+- Role-based permission theo AD group
+- Audit log đầy đủ
